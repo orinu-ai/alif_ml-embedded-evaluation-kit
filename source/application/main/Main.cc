@@ -28,13 +28,14 @@
 #include <exception>
 
 extern void MainLoop();
+extern "C" void hp_phase15b_step1_init(void);   /* Phase 15b: C function in platform_drivers.c */
 
 #if defined(__ARMCC_VERSION) && (__ARMCC_VERSION >= 6010050)
 __ASM(" .global __ARM_use_no_argv\n");
 #endif
 
 /* Print application information. */
-static void PrintApplicationIntro()
+[[maybe_unused]] static void PrintApplicationIntro()
 {
     info("%s\n", PRJ_DES_STR);
     info("Version %s Build date: " __DATE__ " @ " __TIME__ "\n", PRJ_VER_STR);
@@ -43,7 +44,7 @@ static void PrintApplicationIntro()
          "its affiliates <open-source-office@arm.com>\n\n");
 }
 
-static void out_of_heap()
+[[maybe_unused]] static void out_of_heap()
 {
     warn("Out of heap\n");
     std::terminate();
@@ -51,6 +52,18 @@ static void out_of_heap()
 
 int main ()
 {
+#if defined(M55_HP) || defined(RTSS_HP)
+    /* Em-boxer Phase 15b Step 1+2+3+4: HP full init + obj_det MainLoop */
+    hp_phase15b_step1_init();
+    
+    /* Phase 15b Step 4: obj_det MainLoop (model + camera + inference) */
+    MainLoop();
+    
+    /* Should be unreachable */
+    while (1) {
+        __WFI();
+    }
+#else
     if (hal_platform_init()) {
         /* Application information, UART should have been initialised. */
         PrintApplicationIntro();
@@ -67,4 +80,5 @@ int main ()
     /* Release platform. */
     hal_platform_release();
     return 0;
+#endif
 }

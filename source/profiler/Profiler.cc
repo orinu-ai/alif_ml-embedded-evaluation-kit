@@ -18,6 +18,10 @@
 #include "log_macros.h"
 
 #include <cstring>
+#include <cinttypes>
+#ifndef PRIu64
+#define PRIu64 "llu"
+#endif
 
 namespace arm {
 namespace app {

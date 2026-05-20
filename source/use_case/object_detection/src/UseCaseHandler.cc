@@ -21,6 +21,7 @@
 #include "UseCaseCommonUtils.hpp"
 #include "YoloFastestModel.hpp"
 #include "hal.h"
+#include "cmsis_compiler.h"
 #include "log_macros.h"
 
 #include <cinttypes>
@@ -49,10 +50,18 @@ namespace app {
                                    uint32_t imgStartY,
                                    uint32_t imgDownscaleFactor);
 
+#define UCH_MARKER(val) do { \
+    *(volatile uint32_t*)0x027DC504 = (val); \
+    SCB_CleanDCache_by_Addr((void*)0x027DC504, 4); \
+    __DSB(); \
+} while(0)
+
     /* Object detection inference handler. */
     bool ObjectDetectionHandler(ApplicationContext& ctx)
     {
+        UCH_MARKER(0xDEAD0001);  /* entry */
         auto& profiler = ctx.Get<Profiler&>("profiler");
+        UCH_MARKER(0xDEAD0002);  /* after profiler get */
 
         constexpr uint32_t dataPsnImgDownscaleFactor = 1;
         constexpr uint32_t dataPsnImgStartX          = 10;
@@ -61,7 +70,9 @@ namespace app {
         constexpr uint32_t dataPsnTxtInfStartX = 20;
         constexpr uint32_t dataPsnTxtInfStartY = 28;
 
+        UCH_MARKER(0xDEAD0003);  /* before hal_display_clear */
         hal_display_clear(COLOR_BLACK);
+        UCH_MARKER(0xDEAD0004);  /* after hal_display_clear */
 
         auto& model = ctx.Get<fwk::iface::Model&>("model");
         if (!model.IsInited()) {

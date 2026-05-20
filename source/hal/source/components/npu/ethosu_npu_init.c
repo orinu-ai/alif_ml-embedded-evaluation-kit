@@ -19,6 +19,7 @@
 
 #include "RTE_Components.h"         /* For CPU related defintiions */
 #include "log_macros.h"             /* Logging functions */
+#include "cmsis_compiler.h"
 
 #include "ethosu_mem_config.h"      /* Arm Ethos-U memory config */
 #include "ethosu_driver.h"          /* Arm Ethos-U driver header */
@@ -62,23 +63,6 @@ static size_t get_cache_arena_size()
 #endif /* defined (ETHOS_U_CACHE_BUF_SZ) && (ETHOS_U_CACHE_BUF_SZ > 0) */
 }
 
-/**
- * @brief  Initialises the NPU IRQ
- **/
-static void arm_ethosu_npu_irq_init(void)
-{
-    const IRQn_Type ethosu_irqnum = (IRQn_Type)ETHOS_U_IRQN;
-
-    /* Register the EthosU IRQ handler in our vector table.
-     * Note, this handler comes from the EthosU driver */
-    NVIC_SetVector(ethosu_irqnum, (uint32_t)arm_ethosu_npu_irq_handler);
-
-    /* Enable the IRQ */
-    NVIC_EnableIRQ(ethosu_irqnum);
-
-    debug("EthosU IRQ#: %u, Handler: 0x%p\n",
-          ethosu_irqnum, arm_ethosu_npu_irq_handler);
-}
 
 /**
  * @brief   Defines the Ethos-U interrupt handler: just a wrapper around the default
@@ -90,27 +74,67 @@ void arm_ethosu_npu_irq_handler(void)
     ethosu_irq_handler(&ethosu_drv);
 }
 
+static void arm_ethosu_npu_irq_init(void)
+{
+    /* ★ IRQ init entry */
+    *(volatile uint32_t*)0x027DC454 = 0xBEEFA001;
+    SCB_CleanDCache_by_Addr((void*)0x027DC454, 4); __DSB();
+    
+    const IRQn_Type ethosu_irqnum = (IRQn_Type)ETHOS_U_IRQN;
+    
+    /* IRQ 번호 + pending status 진단 */
+    *(volatile uint32_t*)0x027DC458 = (uint32_t)ethosu_irqnum;
+    *(volatile uint32_t*)0x027DC45C = NVIC_GetPendingIRQ(ethosu_irqnum);
+    SCB_CleanDCache_by_Addr((void*)0x027DC458, 8); __DSB();
+    
+    /* ★ 이전 pending IRQ clear (가설 검증) */
+    NVIC_ClearPendingIRQ(ethosu_irqnum);
+    
+    *(volatile uint32_t*)0x027DC454 = 0xBEEFA002;
+    SCB_CleanDCache_by_Addr((void*)0x027DC454, 4); __DSB();
+    
+    NVIC_SetVector(ethosu_irqnum, (uint32_t)arm_ethosu_npu_irq_handler);
+    
+    *(volatile uint32_t*)0x027DC454 = 0xBEEFA003;
+    SCB_CleanDCache_by_Addr((void*)0x027DC454, 4); __DSB();
+    
+    NVIC_EnableIRQ(ethosu_irqnum);
+    
+    *(volatile uint32_t*)0x027DC454 = 0xBEEFA004;
+    SCB_CleanDCache_by_Addr((void*)0x027DC454, 4); __DSB();
+
+    debug("EthosU IRQ#: %u, Handler: 0x%p\n",
+          ethosu_irqnum, arm_ethosu_npu_irq_handler);
+}
 int arm_ethosu_npu_init(void)
 {
+    /* ★ Function entry marker */
+    *(volatile uint32_t*)0x027DC450 = 0xBEEF0001;
+    SCB_CleanDCache_by_Addr((void*)0x027DC450, 4);
+    __DSB();
+    
     int err = 0;
 
     /* Initialise the IRQ */
     arm_ethosu_npu_irq_init();
+    *(volatile uint32_t*)0x027DC408 = 0xBEEF0002; SCB_CleanDCache_by_Addr((void*)0x027DC408, 4); __DSB();
 
     /* Initialise Ethos-U device */
     void* const ethosu_base_address = (void *)(ETHOS_U_BASE_ADDR);
     info("Initialising Ethos-U device@0x%" PRIx32 "\n", (uint32_t)(ETHOS_U_BASE_ADDR));
 
-    if (0 != (err = ethosu_init(&ethosu_drv,         /* Ethos-U driver device pointer */
-                                ethosu_base_address, /* Ethos-U NPU's base address. */
-                                get_cache_arena(),   /* Pointer to fast mem area - NULL for U55. */
-                                get_cache_arena_size(), /* Fast mem region size. */
-                                ETHOS_U_SEC_ENABLED,    /* Security enable. */
-                                ETHOS_U_PRIV_ENABLED))) /* Privilege enable. */ {
+    *(volatile uint32_t*)0x027DC408 = 0xBEEF0003; SCB_CleanDCache_by_Addr((void*)0x027DC408, 4); __DSB();
+    if (0 != (err = ethosu_init(&ethosu_drv,
+                                ethosu_base_address,
+                                get_cache_arena(),
+                                get_cache_arena_size(),
+                                ETHOS_U_SEC_ENABLED,
+                                ETHOS_U_PRIV_ENABLED))) {
         printf_err("Failed to initialise Ethos-U device\n");
         return err;
     }
 
+    *(volatile uint32_t*)0x027DC408 = 0xBEEF0004; SCB_CleanDCache_by_Addr((void*)0x027DC408, 4); __DSB();
     info("Ethos-U device initialised\n");
 
     /* Get Ethos-U version */

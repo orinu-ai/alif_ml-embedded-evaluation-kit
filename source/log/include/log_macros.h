@@ -1,3 +1,5 @@
+#define __STDC_FORMAT_MACROS
+#include <inttypes.h>
 /*
  * SPDX-FileCopyrightText: Copyright 2021, 2025 Arm Limited and/or
  * its affiliates <open-source-office@arm.com>

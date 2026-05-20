@@ -196,7 +196,23 @@ static uint32_t set_power_profiles()
     default_runprof.cpu_clk_freq    = CLOCK_FREQUENCY_400MHZ;
 #endif
     default_runprof.vdd_ioflex_3V3  = IOFLEX_LEVEL_1V8;
+#if defined(M55_HP) || defined(RTSS_HP)
+    /* Em-boxer T1 Phase 15a A4-v3: ThreadX HP 패턴 정확히
+     * - cpu_clk_freq 안 만짐 (system clock + ETH PHY 영향 회피)
+     * - ip_clock_gating 안 만짐 (NPU mask + OSPI 보존)
+     * - phy_pwr_gating만 OR (DPHY for camera/display) */
+    {
+        run_profile_t hp_runprof = {0};
+        err = SERVICES_get_run_cfg(services_handle, &hp_runprof, &service_error_code);
+        if ((err + service_error_code) == 0) {
+            hp_runprof.phy_pwr_gating |= LDO_PHY_MASK | MIPI_PLL_DPHY_MASK |
+                                         MIPI_TX_DPHY_MASK | MIPI_RX_DPHY_MASK;
+            err = SERVICES_set_run_cfg(services_handle, &hp_runprof, &service_error_code);
+        }
+    }
+#else
     err = SERVICES_set_run_cfg(services_handle, &default_runprof, &service_error_code);
+#endif
 
     if ((err + service_error_code) == 0) {
         // No power domains on off profile -> device can go to chip STOP mode which is the most least power consumption state
@@ -231,7 +247,10 @@ static uint32_t set_power_profiles()
 #else
 #error "Only M55_HE or M55_HP core is supported!"
 #endif
+#if !defined(M55_HP) && !defined(RTSS_HP)
+        /* Em-boxer A4-v4b: HP는 off_cfg skip (sleep 안 감, ThreadX HP 패턴) */
         err = SERVICES_set_off_cfg(services_handle, &default_offprof, &service_error_code);
+#endif
     }
 
     return (err + service_error_code);
@@ -330,13 +349,20 @@ int platform_init(void)
     // Init SE. Use case MainLoop.cc will do the re-init if needed but only updates the callback function
     services_init(ipc_rx_callback);
 
-    SERVICES_synchronize_with_se(services_handle);
-
     uint32_t service_error_code;
 
+#if !defined(M55_HP) && !defined(RTSS_HP)
+    /* Em-boxer A4-v4: HP는 SE sync/debug skip (ThreadX HP 패턴) */
+    SERVICES_synchronize_with_se(services_handle);
     SERVICES_system_set_services_debug(services_handle, false, &service_error_code);
+#endif
 
+#if !defined(M55_HP) && !defined(RTSS_HP)
+    /* Em-boxer A4-v4c: HP는 set_power_profiles 자체 skip (ThreadX HP 패턴) */
     se_err = (int)set_power_profiles();
+#else
+    se_err = 0;
+#endif
 
 #endif // SE_SERVICES_SUPPORT
 
@@ -353,11 +379,14 @@ int platform_init(void)
     if (HWSEMdrv->TryLock() == ARM_DRIVER_OK) {
         /* We're first to acquire the lock - we do it */
 #endif // BALLETTO_DEVICE
+#if !defined(M55_HP) && !defined(RTSS_HP)
+        /* Em-boxer A4-v4e: HP는 pinmux/GPIO skip (ETH 핀 영향 회피) */
         board_pins_config();
         board_gpios_config();
+#endif
         BOARD_UTILS_Init();
 
-        tracelib_init(NULL);
+        //tracelib_init(NULL); // disabled for ETH coexistence
 #ifdef OSPI_FLASH_SUPPORT
         err = ospi_flash_init();
         if (err) {
@@ -393,7 +422,7 @@ int platform_init(void)
     } else {
         /* Someone else got there first - they did it or are doing it. Wait until we see count 2 indicating they've finished */
         while (HWSEMdrv->GetCount() < 2);
-        tracelib_init(NULL);
+        //tracelib_init(NULL); // disabled for ETH coexistence
     }
 
     HWSEMdrv->Uninitialize();
@@ -421,10 +450,13 @@ int platform_init(void)
     int state;
 
     /* If Arm Ethos-U NPU is to be used, we initialise it here */
+#if !defined(M55_HP) && !defined(RTSS_HP)
+    /* Em-boxer A4-v4d: HP는 NPU init skip (ThreadX HP 패턴 - NPU 안 씀) */
     if (0 != (state = arm_ethosu_npu_init())) {
         return state;
     }
     NVIC_SetPriority((IRQn_Type)ETHOS_U_IRQN, 0x60);
+#endif
 
 #endif /* ARM_NPU */
 
@@ -852,3 +884,94 @@ void platform_ethosu_inference_end(void)
 {
     set_flash_to_wrap_and_enable_caching();
 }
+
+
+
+#if defined(M55_HP) || defined(RTSS_HP)
+/* Phase 15b Step 1+2: HP minimum init + NPU init
+ * Step 1: services_init + clocks + DPHY RMW (검증 완료)
+ * Step 2: NPU init + NVIC priority (NEW) */
+
+ /* HP marker for SRAM diagnostic (Phase 15b) */
+#define HP_MARKER(val) do { \
+    *(volatile uint32_t*)0x027DC400 = (val); \
+    SCB_CleanDCache_by_Addr((void*)0x027DC400, 4); \
+    __DSB(); \
+} while(0)
+
+void hp_phase15b_step1_init(void)
+{
+        
+#ifdef SE_SERVICES_SUPPORT
+    uint32_t err = 0, service_error_code = 0;
+    
+    services_init(ipc_rx_callback);
+    se_services_s_handle = services_handle;
+    
+    SERVICES_clocks_enable_clock(se_services_s_handle, CLKEN_HFOSC, true, &service_error_code);
+    SERVICES_clocks_enable_clock(se_services_s_handle, CLKEN_CLK_100M, true, &service_error_code);
+    SERVICES_clocks_enable_clock(se_services_s_handle, CLKEN_CLK_20M, true, &service_error_code);
+    
+    /* DPHY RMW (A4-v3) */
+    run_profile_t runp = {0};
+    SERVICES_get_run_cfg(se_services_s_handle, &runp, &err);
+    
+    /* Phase 15b 진단: HP가 본 ip_clock_gating (HE가 set한 후의 값) */
+    *(volatile uint32_t*)0x027DC080 = runp.ip_clock_gating;
+    *(volatile uint32_t*)0x027DC084 = runp.phy_pwr_gating;
+    *(volatile uint32_t*)0x027DC088 = runp.power_domains;
+    *(volatile uint32_t*)0x027DC08C = err;
+    SCB_CleanDCache_by_Addr((void*)0x027DC080, 16);
+    __DSB();
+    
+    runp.phy_pwr_gating  |= LDO_PHY_MASK | MIPI_PLL_DPHY_MASK |
+                            MIPI_TX_DPHY_MASK | MIPI_RX_DPHY_MASK;
+    
+    /* HE default 그대로 OR — LP_PERIPH 등 NPU dependent clock 보장 */
+    runp.ip_clock_gating |= MIPI_DSI_MASK | CDC200_MASK | MIPI_CSI_MASK |
+                            CAMERA_MASK | LP_PERIPH_MASK |
+                            NPU_HE_MASK | NPU_HP_MASK;
+    
+    SERVICES_set_run_cfg(se_services_s_handle, &runp, &err);
+    
+    /* SE → hardware 반영 대기 (비동기 호출 가능성, ~100ms) */
+    for (volatile int i = 0; i < 1000000; i++) { __NOP(); }
+    
+    /* DUMP AFTER: SE readback — 실제 SE가 적용한 값 확인 */
+    SERVICES_get_run_cfg(se_services_s_handle, &runp, &err);
+    *(volatile uint32_t*)0x027DC090 = runp.ip_clock_gating;
+    *(volatile uint32_t*)0x027DC094 = runp.memory_blocks;
+    *(volatile uint32_t*)0x027DC098 = runp.power_domains;
+    *(volatile uint32_t*)0x027DC09C = err;
+    SCB_CleanDCache_by_Addr((void*)0x027DC090, 16);
+    __DSB();
+#endif
+
+    HP_MARKER(0xCAFE0007);
+    
+    /* SCB->VTOR dump (before copy) */
+    *(volatile uint32_t*)0x027DC460 = SCB->VTOR;
+    SCB_CleanDCache_by_Addr((void*)0x027DC460, 4); __DSB();
+    
+    /* RAM vector table 활성화 */
+    copy_vtor_table_to_ram();
+    
+    /* SCB->VTOR dump (after copy) */
+    *(volatile uint32_t*)0x027DC464 = SCB->VTOR;
+    SCB_CleanDCache_by_Addr((void*)0x027DC464, 4); __DSB();
+    
+    /* NPU register pre-check (★ 한 번만!) */
+    volatile uint32_t npu_id = *(volatile uint32_t*)0x400E1000;
+    *(volatile uint32_t*)0x027DC0A0 = npu_id;
+    SCB_CleanDCache_by_Addr((void*)0x027DC0A0, 4);
+    __DSB();
+    
+    HP_MARKER(0xCAFE0017);
+    
+    arm_ethosu_npu_init();
+
+    HP_MARKER(0xCAFE0008);
+    NVIC_SetPriority((IRQn_Type)ETHOS_U_IRQN, 0x60);
+    HP_MARKER(0xCAFE000A);
+}
+#endif

@@ -32,8 +32,8 @@
 
 __STACK_SIZE = 0x00008000;
 __HEAP_SIZE  = 0x00017000;
-__ROM_BASE = 0x80008000;
-__ROM_SIZE = 0x00477000;
+__ROM_BASE = 0x804DB000;
+__ROM_SIZE = 0x000A32A0;   /* TOC managed area 직전, 침범 0 (안전) */
 
 #ifdef BOARD_OSPI_FLASH_BASE
 __OSPI_FLASH_BASE = BOARD_OSPI_FLASH_BASE;
@@ -232,6 +232,29 @@ SECTIONS
   } > DTCM
   PROVIDE(__stack = __StackTop);
 
+  #ifdef BOARD_OSPI_FLASH_BASE
+  /* Phase 15b Step 2 (2026-05-19): C++ large rodata → OSPI
+   * .readonly.at_mram MRAM overflow 2624 bytes 해결.
+   * GNU LD는 input section을 첫 매칭 output section에 할당하므로
+   * 이 블록이 .readonly.at_mram보다 먼저 정의되어야 함. */
+  .readonly.at_ext_flash : ALIGN(8)
+  {
+    *(nn_model_ext_flash)            /* NN model (기존) */
+    *(.rodata._ZTV*)                 /* C++ vtables */
+    *(.rodata._ZTI*)                 /* C++ typeinfo objects */
+    *(.rodata._ZTS*)                 /* C++ typeinfo names */
+    *(.rodata._ZNSt*)                /* std:: namespace strings */
+    *(.rodata.glyph_*)               /* ★ LVGL glyph data (~2.2KB) */
+    *(.rodata.font_*)                /* ★ LVGL font descriptors */
+    *(.rodata.lv_font_*)             /* ★ LVGL font tables */
+    *(.rodata.str1.*)                /* string literals */
+    *(.rodata._ZZN6tflite*)
+    *(.rodata._ZN3arm*)
+    *(.rodata._Z*)                   /* ★ 모든 C++ mangled rodata */
+    *(.rodata)                       /* ★ C library .rodata (libm/libc) */
+  } > OSPI_FLASH
+#endif
+
   .readonly.at_mram : ALIGN(8)
   {
     /* Use wildcards to mop up any read-only not directed to TCM */
@@ -280,10 +303,5 @@ SECTIONS
     KEEP(*(.eh_frame*))
   } > MRAM
 
-#ifdef BOARD_OSPI_FLASH_BASE
-  .readonly.at_ext_flash : ALIGN(8)
-  {
-    *(nn_model_ext_flash)
-  } > OSPI_FLASH
-#endif
+
 }

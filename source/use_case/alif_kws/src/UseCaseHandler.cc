@@ -33,6 +33,13 @@
 #include "hal.h"
 #include "timer_alif.h"
 #include "AudioUtils.hpp"
+
+/* Shared memory marker for J-Link debugging */
+static volatile uint32_t* const g_marker = (volatile uint32_t*)0x027DC000;
+
+
+
+/* Shared memory marker for J-Link debugging */
 #include "ImageUtils.hpp"
 #include "UseCaseCommonUtils.hpp"
 #include "KwsResult.hpp"
@@ -92,29 +99,66 @@ static bool PresentInferenceResult(const std::vector<arm::app::kws::KwsResult>& 
 #ifdef SE_SERVICES_SUPPORT
 static std::string last_label;
 
+
+/* Prevent compiler from optimizing away */
+__attribute__((noinline)) void sram0_notify_hp(uint32_t kw_id) {
+    static uint32_t count = 0;
+    *(volatile uint32_t *)0x027DC010 = kw_id;
+    *(volatile uint32_t *)0x027DC014 = ++count;
+    __DMB();
+}
+
 static void send_msg_if_needed(arm::app::kws::KwsResult &result)
 {
-    mhu_data.id = 2; // id for M55_HE
+    static uint32_t cooldown_count = 0;
+    #define COOLDOWN_INFERENCES 3  /* ~1.5s (0.5s x 3) */
+
     if (result.m_resultVec.empty()) {
-        last_label.clear();
+        return;
+    }
+    arm::app::ClassificationResult classification = result.m_resultVec[0];
+
+    /* Silence/unknown → reset cooldown immediately */
+    if (classification.m_label == "_silence_" || classification.m_label == "_unknown_") {
+        cooldown_count = 0;
         return;
     }
 
-    arm::app::ClassificationResult classification = result.m_resultVec[0];
-
-    if (classification.m_label != last_label) {
-        if (classification.m_label == "go" || classification.m_label == "stop") {
-            info("******************* send_msg_if_needed, FOUND \"%s\", copy data end send! ******************\n", classification.m_label.c_str());
-            strcpy(mhu_data.msg, classification.m_label.c_str());
-            __DMB();
-#if defined(M55_HE) || defined(RTSS_HE)
-            SERVICES_send_msg(hp_comms_handle, LocalToGlobal(&mhu_data));
-#else
-            SERVICES_send_msg(he_comms_handle, LocalToGlobal(&mhu_data));
-#endif
-        }
-        last_label = classification.m_label;
+    /* Still in cooldown → skip */
+    if (cooldown_count > 0) {
+        cooldown_count--;
+        return;
     }
+
+    /* Keyword detected! */
+    info("*** KWS DETECTED: \"%s\" (score=%.1f) ***\n",
+         classification.m_label.c_str(), classification.m_normalisedVal);
+    strcpy(mhu_data.msg, classification.m_label.c_str());
+
+    /* Label to kw_id mapping */
+    static const char* kw_labels[] = {
+        "orinu", "home", "reader", "embosser", "inkjet", "eyecam", "setting",
+        "start", "stop", "pause", "resume", "cancel",
+        "louder", "softer", "quiet", "mute", "unmute", "status", "help",
+        "play", "next", "previous", "repeat", "emergency",
+        "test", "eject", "load", "front", "back", "both", "yes", "no",
+        "shuffle", "timer", "alarm", "ask", "connect", "sleep", "wake", "shutdown",
+        "read", "capture", "bookmark", "translate", "summary", "speed_up", "slow_down",
+        "color", "draft", "quality", "duplex", "photo",
+        "describe", "zoom_in", "zoom_out", "record", "detect", "identify", "call",
+        "wifi", "language", "volume", "update", "reset"
+    };
+    uint32_t kw_id = 0;
+    for (uint32_t i = 0; i < 64; i++) {
+        if (classification.m_label == kw_labels[i]) {
+            kw_id = i + 1;
+            break;
+        }
+    }
+    sram0_notify_hp(kw_id);
+
+    /* Start cooldown */
+    cooldown_count = COOLDOWN_INFERENCES;
 }
 #endif
 
@@ -122,6 +166,7 @@ static void send_msg_if_needed(arm::app::kws::KwsResult &result)
     bool ClassifyAudioHandler(ApplicationContext& ctx, bool oneshot)
     {
         auto& profiler = ctx.Get<Profiler&>("profiler");
+        g_marker[0] = 0xDEADBEEF; g_marker[1] = 0; g_marker[3] = 0xAA01;
         auto& model = ctx.Get<Model&>("model");
         const auto mfccFrameLength = ctx.Get<int>("frameLength");
         const auto mfccFrameStride = ctx.Get<int>("frameStride");
@@ -201,6 +246,7 @@ static void send_msg_if_needed(arm::app::kws::KwsResult &result)
 
             uint32_t start = Get_SysTick_Cycle_Count32();
             /* Run the pre-processing, inference and post-processing. */
+            g_marker[3] = 0xBB01;
             if (!preProcess.DoPreProcess(inferenceWindow, index)) {
                 printf_err("Pre-processing failed.");
                 return false;
@@ -208,6 +254,7 @@ static void send_msg_if_needed(arm::app::kws::KwsResult &result)
             printf("Preprocessing time = %.3f ms\n", (double) (Get_SysTick_Cycle_Count32() - start) / SystemCoreClock * 1000);
 
             start = Get_SysTick_Cycle_Count32();
+            g_marker[3] = 0xBB02;
             if (!RunInference(model, profiler)) {
                 printf_err("Inference failed.");
                 return false;
@@ -215,11 +262,13 @@ static void send_msg_if_needed(arm::app::kws::KwsResult &result)
             printf("Inference time = %.3f ms\n", (double) (Get_SysTick_Cycle_Count32() - start) / SystemCoreClock * 1000);
 
             start = Get_SysTick_Cycle_Count32();
+            g_marker[3] = 0xBB03;
             if (!postProcess.DoPostProcess()) {
                 printf_err("Post-processing failed.");
                 return false;
             }
             printf("Postprocessing time = %.3f ms\n", (double) (Get_SysTick_Cycle_Count32() - start) / SystemCoreClock * 1000);
+            g_marker[1]++; g_marker[3] = 0xBB04;
 
             /* Add results from this window to our final results vector. */
             if (infResults.size() == RESULTS_MEMORY) {

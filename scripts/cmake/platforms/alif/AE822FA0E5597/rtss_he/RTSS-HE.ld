@@ -32,8 +32,9 @@
 
 __STACK_SIZE = 0x00001800;
 __HEAP_SIZE  = 0x00008000;
-__ROM_BASE = 0x80008000;
-__ROM_SIZE = 0x0047F000;
+/* __ROM_BASE = 0x80008000;  */
+__ROM_BASE = 0x80400000;
+__ROM_SIZE = 0x000FF000;   /* was 0x0047F000 — limited to HE region (1MB, ends before HP @ 0x80500000) */
 
 #ifdef BOARD_OSPI_FLASH_BASE
 __OSPI_FLASH_BASE = BOARD_OSPI_FLASH_BASE;
@@ -49,7 +50,7 @@ MEMORY
 {
   ITCM  (rwx) : ORIGIN = 0x01000000, LENGTH = 0x00040000
   DTCM  (rwx) : ORIGIN = 0x20000000, LENGTH = 0x00040000
-  SRAM  (rwx)     : ORIGIN = ALIF_SRAM_BASE, LENGTH = ALIF_SRAM_SIZE
+  SRAM  (rwx)     : ORIGIN = 0x0277D000, LENGTH = 0x00061000
   UNSTRIPED (rwx) : ORIGIN = UNSTRIPED_BASE, LENGTH = UNSTRIPED_SIZE
   MRAM  (rx)      : ORIGIN = __ROM_BASE,     LENGTH = __ROM_SIZE
 
@@ -172,7 +173,7 @@ SECTIONS
   {
     * (.bss.large_ram)                     /* Large LVGL buffers */
     * (.bss.camera_frame_buf)              /* Camera Frame Buffer */
-    * (.bss.camera_frame_bayer_to_rgb_buf) /* (Optional) Camera Frame Buffer for Bayer to RGB Convertion.*/
+    * (.bss.camera_frame_bayer_to_rgb_buf) /* (Optional) Camera Frame Buffer for Bayer to RGB Convertion.*/    
     * (.bss.NoInit.ethos_u_cache)
     * (.bss.NoInit.activation_buf_sram)
     * (.bss.NoInit.temp_buf_sram)
@@ -190,6 +191,7 @@ SECTIONS
 #ifdef BOARD_OSPI_RAM_BASE
   .bss.ext_ram (NOLOAD) : ALIGN(8)
   {
+    * (.bss.NoInit.ext_ram)
   } > OSPI_RAM
 #endif
 

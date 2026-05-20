@@ -21,3 +21,28 @@ scripts/py/venv*
 env
 venv
 __pycache__*
+
+# Em-boxer T1 dev backup files (Phase 14/15a/15b)
+*.before_*
+*.backup_*
+*.NIGHTMARE_*
+*.A4v4*_only
+*.A4v4a_only
+*.bak
+*.PHASE*_WORKING
+.Zone.Identifier
+
+# Em-boxer T1 dev backup files (Phase 14/15a/15b)
+*.before_*
+*.backup_*
+*.backup_original
+*.NIGHTMARE_*
+*.A4v4*_only
+*.bak
+*.PHASE*_WORKING
+.Zone.Identifier
+
+# Em-boxer T1 experimental files (not yet integrated)
+source/hal/source/platform/alif/source/early_scatter_load.c
+source/use_case/alif_kws/include/test_audio_data.h
+source/use_case/alif_kws/src/test_audio_data.cc

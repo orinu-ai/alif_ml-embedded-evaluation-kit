@@ -32,9 +32,19 @@ namespace app {
 } /* namespace app */
 } /* namespace arm */
 
+#include "cmsis_compiler.h"
+
+#define ML_MARKER(val) do { \
+    *(volatile uint32_t*)0x027DC500 = (val); \
+    SCB_CleanDCache_by_Addr((void*)0x027DC500, 4); \
+    __DSB(); \
+} while(0)
+
 void MainLoop()
 {
-    arm::app::fwk::tflm::YoloFastestModel model; /* Model wrapper object. */
+    ML_MARKER(0xA1000001);  /* entry */
+    arm::app::fwk::tflm::YoloFastestModel model;
+    ML_MARKER(0xA1000002);  /* after model var */ /* Model wrapper object. */
 
     arm::app::fwk::iface::MemoryRegion modelMem{arm::app::object_detection::GetModelPointer(),
                                                 arm::app::object_detection::GetModelLen()};
@@ -42,10 +52,14 @@ void MainLoop()
                                                   sizeof(arm::app::activationBuf)};
 
     /* Load the model. */
+    ML_MARKER(0xA1000003);  /* before model.Init */
     if (!model.Init(computeMem, modelMem)) {
+        ML_MARKER(0xA100FA11);  /* model.Init FAIL */
         printf_err("Failed to initialise model\n");
         return;
     }
+
+    ML_MARKER(0xA1000004);  /* model.Init OK */
 
     /* Instantiate application context. */
     arm::app::ApplicationContext caseContext;
@@ -54,7 +68,9 @@ void MainLoop()
     caseContext.Set<arm::app::Profiler&>("profiler", profiler);
     caseContext.Set<arm::app::fwk::iface::Model&>("model", model);
 
+    ML_MARKER(0xA1000005);  /* before ObjectDetectionHandler */
     bool executionSuccessful = ObjectDetectionHandler(caseContext);
+    ML_MARKER(0xA1000006);  /* ObjectDetectionHandler returned */
     info("Main loop terminated %s.\n",
         executionSuccessful ? "successfully" : "with failure");
 }
