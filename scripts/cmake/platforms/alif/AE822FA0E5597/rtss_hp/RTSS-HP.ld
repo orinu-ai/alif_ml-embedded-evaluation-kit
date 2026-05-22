@@ -240,7 +240,7 @@ SECTIONS
   .readonly.at_ext_flash : ALIGN(8)
   {
     *(nn_model_ext_flash)            /* NN model (기존) */
-    *(.rodata._ZTV*)                 /* C++ vtables */
+   /* *(.rodata._ZTV*) */                /* C++ vtables */
     *(.rodata._ZTI*)                 /* C++ typeinfo objects */
     *(.rodata._ZTS*)                 /* C++ typeinfo names */
     *(.rodata._ZNSt*)                /* std:: namespace strings */
@@ -250,7 +250,7 @@ SECTIONS
     *(.rodata.str1.*)                /* string literals */
     *(.rodata._ZZN6tflite*)
     *(.rodata._ZN3arm*)
-    *(.rodata._Z*)                   /* ★ 모든 C++ mangled rodata */
+   /* *(.rodata._Z*)  */                 /* ★ 모든 C++ mangled rodata */
     *(.rodata)                       /* ★ C library .rodata (libm/libc) */
   } > OSPI_FLASH
 #endif

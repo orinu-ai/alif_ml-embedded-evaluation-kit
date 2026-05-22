@@ -22,13 +22,22 @@
 
 #include "hal.h"                    /* our hardware abstraction api */
 #include "log_macros.h"
+#include "timer_alif.h"   // ★ Init_SysTick
 
 #include <cstdio>
 #include <new>
 #include <exception>
+#include "cmsis_compiler.h"   // SCB_CleanDCache_by_Addr, __DSB
+
 
 extern void MainLoop();
 extern "C" void hp_phase15b_step1_init(void);   /* Phase 15b: C function in platform_drivers.c */
+
+#define MAIN_MARKER(val) do { \
+    *(volatile uint32_t*)0x027DC480 = (val); \
+    SCB_CleanDCache_by_Addr((void*)0x027DC480, 4); \
+    __DSB(); \
+} while(0)
 
 #if defined(__ARMCC_VERSION) && (__ARMCC_VERSION >= 6010050)
 __ASM(" .global __ARM_use_no_argv\n");
@@ -53,11 +62,18 @@ __ASM(" .global __ARM_use_no_argv\n");
 int main ()
 {
 #if defined(M55_HP) || defined(RTSS_HP)
-    /* Em-boxer Phase 15b Step 1+2+3+4: HP full init + obj_det MainLoop */
-    hp_phase15b_step1_init();
+    MAIN_MARKER(0xBA5E0001);    // ★ main entry
     
-    /* Phase 15b Step 4: obj_det MainLoop (model + camera + inference) */
+    hp_phase15b_step1_init();
+
+    /* ★ Phase 15b Step 3 — Initialize SysTick for sleep/delay */
+    Init_SysTick();                         // ★ 추가
+    
+    MAIN_MARKER(0xBA5E0002);    // ★ after hp_phase15b return
+    
     MainLoop();
+    
+    MAIN_MARKER(0xBA5E0003);    // ★ after MainLoop (unreachable)
     
     /* Should be unreachable */
     while (1) {

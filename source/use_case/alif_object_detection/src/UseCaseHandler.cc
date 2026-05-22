@@ -42,6 +42,17 @@
 #include "lv_port.h"
 #include "lv_paint_utils.h"
 
+/* ★ Phase 15b Step 3 — ObjectDetectionInit progress markers */
+#define ODI_MARKER(val) do { \
+    *(volatile uint32_t*)0x027DC528 = (val); \
+    __asm volatile ("dsb sy" ::: "memory"); \
+} while(0)
+/* ★ Phase 15b Step 3 — ObjectDetectionHandler markers */
+#define OBH_MARKER(val) do { \
+    *(volatile uint32_t*)0x027DC548 = (val); \
+    __asm volatile ("dsb sy" ::: "memory"); \
+} while(0)
+
 #define LIMAGE_X        192
 #define LIMAGE_Y        192
 #define LV_ZOOM         (2 * 256)
@@ -68,28 +79,44 @@ using namespace arm::app::object_detection;
     bool ObjectDetectionInit(YoloFastestModel& model)
     {
 
+        ODI_MARKER(0xD1000001); 
+
+#if 0   // ★ Phase 15b Step 3 — skip LVGL UI (no LCD, will re-enable later)        
         ScreenLayoutInit(lvgl_image, sizeof lvgl_image, LIMAGE_X, LIMAGE_Y, LV_ZOOM);
+        ODI_MARKER(0xD1000002);
+
         uint32_t lv_lock_state = lv_port_lock();
+        ODI_MARKER(0xD1000003); 
+
         lv_label_set_text_static(ScreenLayoutHeaderObject(), "Face Detection");
+        ODI_MARKER(0xD1000004); 
         lv_label_set_text_static(ScreenLayoutLabelObject(0), "Faces Detected: 0");
+        ODI_MARKER(0xD1000005); 
         lv_label_set_text_static(ScreenLayoutLabelObject(1), "192px image (24-bit)");
+        ODI_MARKER(0xD1000006); 
 
         lv_style_init(&boxStyle);
+        ODI_MARKER(0xD1000007);
+
         lv_style_set_bg_opa(&boxStyle, LV_OPA_TRANSP);
         lv_style_set_pad_all(&boxStyle, 0);
         lv_style_set_border_width(&boxStyle, 0);
+        ODI_MARKER(0xD1000008);
+
         lv_style_set_outline_width(&boxStyle, 2);
         lv_style_set_outline_pad(&boxStyle, 0);
         lv_style_set_outline_color(&boxStyle, lv_theme_get_color_primary(ScreenLayoutHeaderObject()));
         lv_style_set_radius(&boxStyle, 4);
         lv_port_unlock(lv_lock_state);
-
+#endif
+        ODI_MARKER(0xD1000009);   
         /* Initialise the camera */
         if (!hal_camera_init()) {
             printf_err("hal_camera_init failed!\n");
             return false;
         }
-
+        ODI_MARKER(0xD100000A);        
+        
         auto inputTensor = model.GetInputTensor(0);
         const auto inputShape = inputTensor->Shape();
         const uint32_t inputImgCols = inputShape[arm::app::fwk::tflm::YoloFastestModel::ms_inputColsIdx];
@@ -101,6 +128,8 @@ using namespace arm::app::object_detection;
             return false;
         }
 
+        // 함수 끝 직전 (return true; 바로 위)에:
+        ODI_MARKER(0xD100000F);  
         return true;
     }
 
@@ -124,6 +153,8 @@ using namespace arm::app::object_detection;
     /* Object detection inference handler. */
     bool ObjectDetectionHandler(ApplicationContext& ctx)
     {
+        OBH_MARKER(0xDD000001);                   // entry
+
         auto& profiler = ctx.Get<Profiler&>("profiler");
         auto& model = ctx.Get<Model&>("model");
 
@@ -131,6 +162,7 @@ using namespace arm::app::object_detection;
             printf_err("Model is not initialised! Terminating processing.\n");
             return false;
         }
+        OBH_MARKER(0xDD000002);
 
         auto inputTensor = model.GetInputTensor(0);
         auto outputTensor0 = model.GetOutputTensor(0);
@@ -160,8 +192,10 @@ using namespace arm::app::object_detection;
 
         /* Ensure there are no results leftover from previous inference when running all. */
         results.clear();
+        OBH_MARKER(0xDD000003);
 
         hal_camera_start();
+        OBH_MARKER(0xDD000004);
 
         uint32_t capturedFrameSize = 0;
         const uint8_t* currImage = hal_camera_get_captured_frame(&capturedFrameSize);
@@ -169,7 +203,11 @@ using namespace arm::app::object_detection;
             printf_err("hal_camera_get_captured_frame failed");
             return false;
         }
+        OBH_MARKER(0xDD000005);
 
+        const size_t copySz = inputTensor->Bytes();
+
+#if 0   // ★★ Phase 15b Step 3 — skip ALL LVGL UI (no LCD)
         {
             ScopedLVGLLock lv_lock;
 
@@ -185,58 +223,65 @@ using namespace arm::app::object_detection;
 
             lv_led_on(ScreenLayoutLEDObject());
 
-            const size_t copySz = inputTensor->Bytes();
-
 #if SHOW_INF_TIME
-        uint32_t inf_prof = Get_SysTick_Cycle_Count32();
+            uint32_t inf_prof = Get_SysTick_Cycle_Count32();
 #endif
 
-            /* Run the pre-processing, inference and post-processing. */
-            if (!preProcess.DoPreProcess(currImage, copySz)) {
-                printf_err("Pre-processing failed.");
-                return false;
-            }
-
-            /* Run inference over this image. */
-
-            if (!RunInference(model, profiler)) {
-                printf_err("Inference failed.");
-                return false;
-            }
-
-            if (!postProcess.DoPostProcess()) {
-                printf_err("Post-processing failed.");
-                return false;
-            }
+            /* (preProcess/inference/postProcess moved outside this block) */
 
 #if SHOW_INF_TIME
             inf_prof = Get_SysTick_Cycle_Count32() - inf_prof;
             lv_label_set_text_fmt(ScreenLayoutLabelObject(2), "Inference time: %.3f ms", (double)inf_prof / SystemCoreClock * 1000);
             lv_label_set_text_fmt(ScreenLayoutLabelObject(3), "Inferences / sec: %.2f", (double) SystemCoreClock / inf_prof);
-            //lv_label_set_text_fmt(ScreenLayoutLabelObject(3), "Inferences / second: %.2f", (double) SystemCoreClock / (inf_loop_time_end - inf_loop_time_start));
 #endif
 
             lv_label_set_text_fmt(ScreenLayoutLabelObject(0), "Faces Detected: %i", results.size());
-
-            /* Draw boxes. */
             DrawDetectionBoxes(results, inputImgCols, inputImgRows);
 
         } // ScopedLVGLLock
+#endif
+
+        /* ★★ Inference path — outside LVGL block ★★ */
+
+        /* Pre-processing */
+        if (!preProcess.DoPreProcess(currImage, copySz)) {
+            printf_err("Pre-processing failed.");
+            return false;
+        }
+        OBH_MARKER(0xDD000006);
+
+        /* ★★★ NPU INFERENCE ★★★ */
+        if (!RunInference(model, profiler)) {
+            printf_err("Inference failed.");
+            return false;
+        }
+        OBH_MARKER(0xDD000007);
+
+        /* Post-processing */
+        if (!postProcess.DoPostProcess()) {
+            printf_err("Post-processing failed.");
+            return false;
+        }
+        OBH_MARKER(0xDD000008);
 
 #if VERIFY_TEST_OUTPUT
         DumpTensor(modelOutput0);
         DumpTensor(modelOutput1);
 #endif /* VERIFY_TEST_OUTPUT */
 
+        OBH_MARKER(0xDD000009);
+
         if (!PresentInferenceResult(results)) {
             return false;
         }
+        OBH_MARKER(0xDD00000A);
 
         profiler.PrintProfilingResult();
 
+        OBH_MARKER(0xDD00000F);                       // exit
         return true;
     }
-
+    
     static bool PresentInferenceResult(const std::vector<object_detection::DetectionResult>& results)
     {
         /* If profiling is enabled, and the time is valid. */
