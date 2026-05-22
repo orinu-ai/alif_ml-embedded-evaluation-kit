@@ -97,6 +97,10 @@ void MainLoop()
     arm::app::DetectorPreProcess preProcess(inputTensor, true, model.IsDataSigned());
     ML_MARKER(0xA1000061);          // ★ preProcess constructed
 
+    /* ★ Static fake frame buffer (no hal_camera) */
+    static uint8_t fake_frame[192 * 192 * 3] __attribute__((aligned(4))) = {0};
+    ML_MARKER(0xA1000066);   // ★ fake buffer OK
+
 #if 0   // ★ skip Set (heap)
     caseContext.Set<arm::app::Profiler&>("profiler", profiler);
     caseContext.Set<arm::app::fwk::iface::Model&>("model", model);
@@ -110,24 +114,25 @@ void MainLoop()
     __asm volatile ("dsb sy" ::: "memory");
 
     /* Loop */
-    do {
-        ML_COUNTER();
-        ML_MARKER(0xA1000063);                     // ★ before RunInference
-
-        /* ★ Step 3b — NPU inference 직접 호출 (no preProcess, no postProcess) */
-        if (!model.RunInference()) {
-            ML_MARKER(0xA10000F1);  // ★ inference failed
-            continue;
-        }
-        ML_MARKER(0xA1000062);      // ★ inference OK (매 loop)
-
-        /* Inference count */
-        *inf_count = *inf_count + 1;
-        __asm volatile ("dsb sy" ::: "memory");
-
-        ML_MARKER(0xA1000064);                     // ★ before continue (top return)
-        #if 0
-        alif::app::ObjectDetectionHandler(caseContext);
-        #endif
-    } while (1);
+   do {
+    ML_COUNTER();
+    ML_MARKER(0xA1000063);
+    
+    const uint8_t* frame = fake_frame;
+    
+    if (!preProcess.DoPreProcess(frame, copySz)) {
+        ML_MARKER(0xA10000F2);
+        continue;
+    }
+    ML_MARKER(0xA1000065);
+    
+    if (!model.RunInference()) {
+        ML_MARKER(0xA10000F1);
+        continue;
+    }
+    ML_MARKER(0xA1000062);
+    
+    *inf_count = *inf_count + 1;
+    __asm volatile ("dsb sy" ::: "memory");
+} while (1);
 }
