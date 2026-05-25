@@ -22,7 +22,14 @@
 #include <cinttypes>
 #include <memory>
 
+
 namespace arm::app::fwk::tflm {
+
+/* Phase 15b verification — Init progress markers */
+#define TFLM_MARKER(val) do { \
+    *(volatile uint32_t*)0x027DC510 = (val); \
+   __asm volatile ("dsb sy" ::: "memory"); \
+} while(0)
 
 TflmModel::TflmModel() {}
 
@@ -31,6 +38,7 @@ bool TflmModel::Init(iface::MemoryRegion& computeBuffer,
                      iface::MemoryRegion& nnModel,
                      const void* backendData)
 {
+    TFLM_MARKER(0xB1000001);   // ★ Init entry
     /* Following tf lite micro example:
      * Map the model into a usable data structure. This doesn't involve any
      * copying or parsing, it's a very lightweight operation. */
@@ -39,16 +47,20 @@ bool TflmModel::Init(iface::MemoryRegion& computeBuffer,
 
     /* Enable logging before we start interacting with the framework. */
     EnableTFLMLog();
-
+    TFLM_MARKER(0xB1000002);   // ★ after EnableTFLMLog
+    
     this->m_backendData.m_pModel = ::tflite::GetModel(nnModel.data);
+    TFLM_MARKER(0xB1000003);   // ★ after GetModel (OSPI parse 통과)
 
     if (this->m_backendData.m_pModel->version() != TFLITE_SCHEMA_VERSION) {
+        TFLM_MARKER(0xB100FA01);   // ★ FAIL: version mismatch
         printf_err("Model's schema version %" PRIu32 " is not equal "
                    "to supported version %d.",
                    this->m_backendData.m_pModel->version(),
                    TFLITE_SCHEMA_VERSION);
         return false;
     }
+    TFLM_MARKER(0xB1000004);   // ★ version OK
 
     this->m_computeBuffer = computeBuffer;
     this->m_modelBuffer   = nnModel;
@@ -61,8 +73,11 @@ bool TflmModel::Init(iface::MemoryRegion& computeBuffer,
      * static ::tflite::ops::micro::AllOpsResolver resolver; */
     /* NOLINTNEXTLINE(runtime-global-variables) */
     debug("loading op resolver\n");
+    TFLM_MARKER(0xB1000005);   // ★ before EnlistOperations
 
     this->EnlistOperations();
+
+    TFLM_MARKER(0xB1000006);   // ★ after EnlistOperations OK
 
     /** If backend data has been provided, re-use the allocator */
     if (backendData) {
@@ -74,11 +89,15 @@ bool TflmModel::Init(iface::MemoryRegion& computeBuffer,
     if (!this->m_backendData.m_pAllocator) {
         /* Create an allocator instance */
         info("Creating allocator using tensor arena at 0x%p\n", computeBuffer.data);
+        TFLM_MARKER(0xB1000007);   // ★ before MicroAllocator::Create
 
         this->m_backendData.m_pAllocator =
             tflite::MicroAllocator::Create(computeBuffer.data, computeBuffer.size);
 
+        TFLM_MARKER(0xB1000008);   // ★ after MicroAllocator::Create
+
         if (!this->m_backendData.m_pAllocator) {
+            TFLM_MARKER(0xB100FA02);   // ★ FAIL: allocator
             printf_err("Failed to create allocator\n");
             return false;
         }
@@ -87,22 +106,34 @@ bool TflmModel::Init(iface::MemoryRegion& computeBuffer,
         debug("Using existing allocator @ 0x%p\n", this->m_backendData.m_pAllocator);
     }
 
+    TFLM_MARKER(0xB1000009);   // ★ before MicroInterpreter
+
     this->m_backendData.m_pInterpreter = std::make_unique<tflite::MicroInterpreter>(
         this->m_backendData.m_pModel, this->GetOpResolver(), this->m_backendData.m_pAllocator);
 
+    TFLM_MARKER(0xB100000A);   // ★ after MicroInterpreter
+
     if (!this->m_backendData.m_pInterpreter) {
+        TFLM_MARKER(0xB100FA03);   // ★ FAIL: interpreter
         printf_err("Failed to allocate interpreter\n");
         return false;
     }
 
     /* Allocate memory from the tensor_arena for the model's tensors. */
     info("Allocating tensors\n");
+    TFLM_MARKER(0xB100000B);   // ★ before AllocateTensors (★ NPU operator init!)
+
     TfLiteStatus allocate_status = this->m_backendData.m_pInterpreter->AllocateTensors();
 
+    TFLM_MARKER(0xB100000C);   // ★ after AllocateTensors
+
     if (allocate_status != kTfLiteOk) {
+        TFLM_MARKER(0xB100FA04);   // ★ FAIL: AllocateTensors
         printf_err("tensor allocation failed!\n");
         return false;
     }
+
+    TFLM_MARKER(0xB100000D);   // ★ AllocateTensors OK
 
     /* Get information about the memory area to use for the model's input. */
     this->m_input.resize(this->GetNumInputs());
@@ -134,6 +165,7 @@ bool TflmModel::Init(iface::MemoryRegion& computeBuffer,
         this->LogInterpreterInfo();
     }
 
+    TFLM_MARKER(0xB100000F);   // ★ Init complete
     this->m_inited = true;
     return true;
 }
@@ -268,15 +300,32 @@ bool TflmModel::ContainsEthosUOperator() const
 bool TflmModel::RunInference()
 {
     bool inference_state = false;
+    *(volatile uint32_t*)0x027DC5C0 = 0xB10E0001;   // entry
+    __asm volatile ("dsb sy" ::: "memory");
+    
     if (this->m_backendData.m_pModel && this->m_backendData.m_pInterpreter) {
-        if (kTfLiteOk != this->m_backendData.m_pInterpreter->Invoke()) {
+        *(volatile uint32_t*)0x027DC5C0 = 0xB10E0002;   // before Invoke
+        __asm volatile ("dsb sy" ::: "memory");
+        
+        TfLiteStatus status = this->m_backendData.m_pInterpreter->Invoke();
+        
+        *(volatile uint32_t*)0x027DC5C0 = 0xB10E0003;   // after Invoke
+        *(volatile uint32_t*)0x027DC5C4 = (uint32_t)status;
+        __asm volatile ("dsb sy" ::: "memory");
+        
+        if (kTfLiteOk != status) {
+            *(volatile uint32_t*)0x027DC5C0 = 0xB10E0004;   // before printf_err
             printf_err("Invoke failed.\n");
+            *(volatile uint32_t*)0x027DC5C0 = 0xB10E0005;   // after printf_err
         } else {
             inference_state = true;
         }
     } else {
         printf_err("Error: No interpreter!\n");
     }
+    
+    *(volatile uint32_t*)0x027DC5C0 = 0xB10E0006;   // exit
+    __asm volatile ("dsb sy" ::: "memory");
     return inference_state;
 }
 

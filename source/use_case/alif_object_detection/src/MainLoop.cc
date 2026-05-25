@@ -35,6 +35,52 @@
 
 #include "DetectorPreProcessing.hpp"   // ★ 추가
 
+/* ============================================================ */
+/* Phase 15b Step 3: NPU driver access + semaphore timeout       */
+/* ============================================================ */
+extern "C" {
+#include "ethosu_driver.h"
+
+/* Driver's internal semaphore struct (baremetal default) */
+struct ethosu_semaphore_t {
+    uint8_t count;
+};
+
+/* External NPU driver instance (defined in ethosu_npu_init.c) */
+extern struct ethosu_driver ethosu_drv;
+
+/* ★ Override soft_reset - skip HW reset for diagnostic */
+int ethosu_soft_reset(struct ethosu_driver *drv) {
+    *(volatile uint32_t*)0x027DC590 = 0xCAFE0001;   // bypass marker
+    *(volatile uint32_t*)0x027DC594 = (uint32_t)drv; // drv pointer
+    __asm volatile ("dsb sy" ::: "memory");
+    return 0;   // ★ Skip dev_soft_reset, just return OK
+}
+
+/* ★ Override weak default - add timeout to prevent forever WFE */
+int ethosu_semaphore_take(void *sem, uint64_t timeout) {
+    (void)timeout;  // baremetal: ignore
+    
+    volatile struct ethosu_semaphore_t* s = (volatile struct ethosu_semaphore_t*)sem;
+    
+    uint32_t loops = 0;
+    while (s->count == 0) {
+      //  __WFE();
+        loops++;
+        if (loops > 10000000) {
+            /* ★ Timeout markers */
+            *(volatile uint32_t*)0x027DC580 = 0xDEAD0001;
+            *(volatile uint32_t*)0x027DC584 = loops;
+            __asm volatile ("dsb sy" ::: "memory");
+            return -1;
+        }
+    }
+    s->count--;
+    return 0;
+}
+
+}  // extern "C"
+
 /* Phase 15b verification markers */
 #define ML_MARKER(val) do { \
     *(volatile uint32_t*)0x027DC500 = (val); \
@@ -116,23 +162,49 @@ void MainLoop()
     /* Loop */
    do {
     ML_COUNTER();
-    ML_MARKER(0xA1000063);
+    
+    /* Driver state BEFORE */
+    *(volatile uint32_t*)0x027DC560 = (uint32_t)ethosu_drv.job.state;
+    *(volatile uint32_t*)0x027DC564 = (uint32_t)ethosu_drv.job.result;
+    if (ethosu_drv.semaphore) {
+        *(volatile uint32_t*)0x027DC568 = 
+            ((struct ethosu_semaphore_t*)ethosu_drv.semaphore)->count;
+    }
+    __asm volatile ("dsb sy" ::: "memory");
+    
+    /* ★ Progress markers */
+    *(volatile uint32_t*)0x027DC500 = 0xA1000063;  // before preProcess
+    __asm volatile ("dsb sy" ::: "memory");
     
     const uint8_t* frame = fake_frame;
+    if (!preProcess.DoPreProcess(frame, copySz)) continue;
     
-    if (!preProcess.DoPreProcess(frame, copySz)) {
-        ML_MARKER(0xA10000F2);
-        continue;
-    }
-    ML_MARKER(0xA1000065);
+    /* ★ */
+    *(volatile uint32_t*)0x027DC500 = 0xA1000064;  // before RunInference
+    __asm volatile ("dsb sy" ::: "memory");
     
     if (!model.RunInference()) {
-        ML_MARKER(0xA10000F1);
+        *(volatile uint32_t*)0x027DC500 = 0xA10000F1;  // RunInference fail
+        __asm volatile ("dsb sy" ::: "memory");
         continue;
     }
-    ML_MARKER(0xA1000062);
+    
+    /* ★ */
+    *(volatile uint32_t*)0x027DC500 = 0xA1000065;  // RunInference OK
+    __asm volatile ("dsb sy" ::: "memory");
+    
+    /* Driver state AFTER */
+    *(volatile uint32_t*)0x027DC56C = (uint32_t)ethosu_drv.job.state;
+    if (ethosu_drv.semaphore) {
+        *(volatile uint32_t*)0x027DC570 = 
+            ((struct ethosu_semaphore_t*)ethosu_drv.semaphore)->count;
+    }
+    __asm volatile ("dsb sy" ::: "memory");
     
     *inf_count = *inf_count + 1;
+    
+    /* ★ */
+    *(volatile uint32_t*)0x027DC500 = 0xA1000066;  // iter end
     __asm volatile ("dsb sy" ::: "memory");
 } while (1);
 }
