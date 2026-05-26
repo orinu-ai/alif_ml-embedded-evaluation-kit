@@ -40,10 +40,6 @@
 /* ============================================================ */
 extern "C" {
 #include "ethosu_driver.h"
-#include "aipm.h"   // ★ ADD
-
-extern uint32_t services_handle;
-extern uint32_t se_services_s_handle;   // ★ ADD
 
 /* Driver's internal semaphore struct (baremetal default) */
 struct ethosu_semaphore_t {
@@ -53,53 +49,12 @@ struct ethosu_semaphore_t {
 /* External NPU driver instance (defined in ethosu_npu_init.c) */
 extern struct ethosu_driver ethosu_drv;
 
-/* ★ Flag for timeout-triggered recovery */
-static volatile int npu_recovery_pending = 0;
-
-int npu_hp_power_cycle(void) {
-    uint32_t err = 0;
-    run_profile_t prof = {0};
-    
-    *(volatile uint32_t*)0x027DC5A0 = 0xC0DE0001;
-    
-    SERVICES_get_run_cfg(se_services_s_handle, &prof, &err);
-    *(volatile uint32_t*)0x027DC5A4 = prof.ip_clock_gating;
-    uint32_t orig = prof.ip_clock_gating;
-    
-    /* SET NPU_HP_MASK */
-    prof.ip_clock_gating |= NPU_HP_MASK;
-    *(volatile uint32_t*)0x027DC5B4 = prof.ip_clock_gating;
-    SERVICES_set_run_cfg(se_services_s_handle, &prof, &err);
-    
-    /* Readback */
-    run_profile_t prof2 = {0};
-    SERVICES_get_run_cfg(se_services_s_handle, &prof2, &err);
-    *(volatile uint32_t*)0x027DC5B8 = prof2.ip_clock_gating;
-    
-    *(volatile uint32_t*)0x027DC5A0 = 0xC0DE0002;
-    for (volatile int i = 0; i < 1000000; i++) { __NOP(); }
-    
-    /* Restore */
-    prof.ip_clock_gating = orig;
-    SERVICES_set_run_cfg(se_services_s_handle, &prof, &err);
-    
-    SERVICES_get_run_cfg(se_services_s_handle, &prof2, &err);
-    *(volatile uint32_t*)0x027DC5BC = prof2.ip_clock_gating;
-    
-    *(volatile uint32_t*)0x027DC5A0 = 0xC0DE0003;
-    for (volatile int i = 0; i < 1000000; i++) { __NOP(); }
-    
-    *(volatile uint32_t*)0x027DC5A0 = 0xC0DE0006;
-    __asm volatile ("dsb sy" ::: "memory");
-    return 0;
-}
-
 /* ★ Override soft_reset - skip HW reset for diagnostic */
 int ethosu_soft_reset(struct ethosu_driver *drv) {
-    *(volatile uint32_t*)0x027DC590 = 0xCAFE0001;
-    /* ★ Always skip - MainLoop drives power_cycle directly */
-    *(volatile uint32_t*)0x027DC59C = 0xCAFE0002;
-    return 0;
+    *(volatile uint32_t*)0x027DC590 = 0xCAFE0001;   // bypass marker
+    *(volatile uint32_t*)0x027DC594 = (uint32_t)drv; // drv pointer
+    __asm volatile ("dsb sy" ::: "memory");
+    return 0;   // ★ Skip dev_soft_reset, just return OK
 }
 
 /* ★ Override weak default - add timeout to prevent forever WFE */
@@ -116,7 +71,6 @@ int ethosu_semaphore_take(void *sem, uint64_t timeout) {
             /* ★ Timeout markers */
             *(volatile uint32_t*)0x027DC580 = 0xDEAD0001;
             *(volatile uint32_t*)0x027DC584 = loops;
-            npu_recovery_pending = 1;   /* ★ Trigger recovery */
             __asm volatile ("dsb sy" ::: "memory");
             return -1;
         }
@@ -208,9 +162,6 @@ void MainLoop()
     /* Loop */
    do {
     ML_COUNTER();
-
- __asm volatile ("dsb sy" ::: "memory");
-
     
     /* Driver state BEFORE */
     *(volatile uint32_t*)0x027DC560 = (uint32_t)ethosu_drv.job.state;
@@ -251,13 +202,6 @@ void MainLoop()
     __asm volatile ("dsb sy" ::: "memory");
     
     *inf_count = *inf_count + 1;
-    
-    /* ★ Preventive NPU reset every 30 inferences */
-    if (((*inf_count) % 30) == 0) {
-        *(volatile uint32_t*)0x027DC5D0 = *inf_count;
-        npu_hp_power_cycle();
-        *(volatile uint32_t*)0x027DC5D4 = 0xC0DE0010;
-    }
     
     /* ★ */
     *(volatile uint32_t*)0x027DC500 = 0xA1000066;  // iter end

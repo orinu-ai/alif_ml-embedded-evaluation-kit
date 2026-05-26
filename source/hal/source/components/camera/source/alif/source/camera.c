@@ -60,56 +60,75 @@ static void CameraEventHandler(uint32_t event)
 
 int32_t camera_init(uint8_t* buffer)
 {
+    *(volatile uint32_t*)0x027DC0F0 = 0xCA000001;
+    __asm volatile ("dsb sy" ::: "memory");
+    
     if (init_done) {
+        *(volatile uint32_t*)0x027DC0F0 = 0xCA0000FE;
         printf("camera_init, already initialized!\n");
         return 0;
     }
+    
 #ifdef MANUAL_CAMERA_POWER
     GPIO_Driver_PWR->SetValue(BOARD_CAMERA_POWER_PIN_NO, GPIO_PIN_OUTPUT_STATE_HIGH);
+    *(volatile uint32_t*)0x027DC0F0 = 0xCA000002;
+    __asm volatile ("dsb sy" ::: "memory");
 #endif
-
-    //////////////////////////////////////////////////////////////////////////////
-    // Camera initialization
-    //////////////////////////////////////////////////////////////////////////////
+    
 #ifdef RESOLUTION_PARAMETER
     int32_t res = camera->Initialize(RESOLUTION_PARAMETER, CameraEventHandler);
 #else
     int32_t res = camera->Initialize(CameraEventHandler);
 #endif
-
+    *(volatile uint32_t*)0x027DC0F0 = 0xCA000003;
+    *(volatile uint32_t*)0x027DC0F4 = (uint32_t)res;
+    __asm volatile ("dsb sy" ::: "memory");
     if (res != ARM_DRIVER_OK) {
         return res;
     }
-
+    
     res = camera->PowerControl(ARM_POWER_FULL);
+    *(volatile uint32_t*)0x027DC0F0 = 0xCA000004;
+    *(volatile uint32_t*)0x027DC0F4 = (uint32_t)res;
+    __asm volatile ("dsb sy" ::: "memory");
     if (res != ARM_DRIVER_OK) {
         return res;
     }
-
+    
 #ifdef RESOLUTION_PARAMETER
     res = camera->Control(CPI_CAMERA_SENSOR_CONFIGURE, RESOLUTION_PARAMETER);
 #else
     res = camera->Control(CPI_CAMERA_SENSOR_CONFIGURE, 0);
 #endif
+    *(volatile uint32_t*)0x027DC0F0 = 0xCA000005;
+    *(volatile uint32_t*)0x027DC0F4 = (uint32_t)res;
+    __asm volatile ("dsb sy" ::: "memory");
     if (res != ARM_DRIVER_OK) {
         return res;
     }
-
+    
 #ifdef CPI_CONFIGURE
     res = camera->Control(CPI_CONFIGURE, 0);
+    *(volatile uint32_t*)0x027DC0F0 = 0xCA000006;
+    *(volatile uint32_t*)0x027DC0F4 = (uint32_t)res;
+    __asm volatile ("dsb sy" ::: "memory");
     if (res != ARM_DRIVER_OK) {
         return res;
     }
 #endif
-
+    
     res = camera->Control(CPI_EVENTS_CONFIGURE, ARM_CPI_EVENT_CAMERA_CAPTURE_STOPPED);
+    *(volatile uint32_t*)0x027DC0F0 = 0xCA000007;
+    *(volatile uint32_t*)0x027DC0F4 = (uint32_t)res;
+    __asm volatile ("dsb sy" ::: "memory");
     if (res != ARM_DRIVER_OK) {
         return res;
     }
-
+    
     buf = buffer;
     init_done = true;
-
+    *(volatile uint32_t*)0x027DC0F0 = 0xCA0000FF;
+    __asm volatile ("dsb sy" ::: "memory");
     return res;
 }
 

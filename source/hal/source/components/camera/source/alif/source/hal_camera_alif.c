@@ -89,23 +89,44 @@ static void hal_camera_reset(void)
 
 bool hal_camera_init(void)
 {
+    *(volatile uint32_t*)0x027DC0E0 = 0xCB000001;
+    __asm volatile ("dsb sy" ::: "memory");
+    
     hal_camera_reset();
+    *(volatile uint32_t*)0x027DC0E0 = 0xCB000002;
+    __asm volatile ("dsb sy" ::: "memory");
+    
     info("Initialising camera interface: %s\n", s_cam_dev.name);
+    *(volatile uint32_t*)0x027DC0E0 = 0xCB000003;
+    __asm volatile ("dsb sy" ::: "memory");
+    
 #ifndef USE_FAKE_CAMERA
     int32_t err = 0;
     err = camera_init(raw_image);
-	if (err != 0) {
+    
+    *(volatile uint32_t*)0x027DC0E0 = 0xCB000004;
+    *(volatile uint32_t*)0x027DC0E4 = (uint32_t)err;
+    __asm volatile ("dsb sy" ::: "memory");
+    
+    if (err != 0) {
+        *(volatile uint32_t*)0x027DC0E0 = 0xCB0000EE;
+        __asm volatile ("dsb sy" ::: "memory");
         printf_err("Failed to initialise camera driver: %ld\n", err);
-		while(1) {
-		    BOARD_LED1_Control(BOARD_LED_STATE_LOW);
-			sleep_or_wait_msec(300);
+        while(1) {
+            BOARD_LED1_Control(BOARD_LED_STATE_LOW);
+            sleep_or_wait_msec(300);
             BOARD_LED1_Control(BOARD_LED_STATE_HIGH);
-			sleep_or_wait_msec(300);
-		}
-	}
-	DEBUG_PRINTF("Camera initialized... \n");
+            sleep_or_wait_msec(300);
+        }
+    }
+    
+    *(volatile uint32_t*)0x027DC0E0 = 0xCB000005;
+    DEBUG_PRINTF("Camera initialized... \n");
     BOARD_LED1_Control(BOARD_LED_STATE_HIGH);
 #endif
+    
+    *(volatile uint32_t*)0x027DC0E0 = 0xCB0000FF;
+    __asm volatile ("dsb sy" ::: "memory");
     return true;
 }
 
