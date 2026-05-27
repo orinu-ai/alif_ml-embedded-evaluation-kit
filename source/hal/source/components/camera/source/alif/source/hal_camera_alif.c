@@ -22,6 +22,7 @@
 #include "image_processing.h"
 #include "bayer.h"
 #include "camera.h"
+#include "pinconf.h"
 #include "board_defs.h"
 #include "board_utils.h"
 #include "base_def.h"
@@ -30,6 +31,27 @@
 #include <tgmath.h>
 #include <string.h>
 
+
+// 파일 상단 include 또는 extern declaration
+#include "platform_drivers.h"   // 만약 enable_peripheral_clocks declaration 있으면
+
+#include "board_config.h"   // CLKEN_HFOSC_MASK, CLKEN_CLK_100M_MASK
+#include "soc.h"               // VBAT struct
+
+
+/* ★ VBAT_PWR_CTRL bit definitions (from DevKit-e8 template main.c) */
+#define VBAT_PWR_CTRL_TX_DPHY_PWR_MASK        (1U << 0)
+#define VBAT_PWR_CTRL_RX_DPHY_PWR_MASK        (1U << 1)
+#define VBAT_PWR_CTRL_TX_DPHY_ISO             (1U << 4)
+#define VBAT_PWR_CTRL_RX_DPHY_ISO             (1U << 5)
+#define VBAT_PWR_CTRL_DPHY_PLL_PWR_MASK       (1U << 8)
+#define VBAT_PWR_CTRL_DPHY_PLL_ISO            (1U << 9)
+#define VBAT_PWR_CTRL_DPHY_VPH_1P8_PWR_BYP_EN (1U << 12)
+
+// 또는:
+//extern uint32_t enable_peripheral_clocks(void);
+// hal_camera_alif.c — enable_peripheral_clocks() 대신:
+extern int32_t board_clocks_config(uint32_t clocks);
 
 #if !defined(RTE_Drivers_CPI)
 #define USE_FAKE_CAMERA 1
@@ -91,10 +113,74 @@ bool hal_camera_init(void)
 {
     *(volatile uint32_t*)0x027DC0E0 = 0xCB000001;
     __asm volatile ("dsb sy" ::: "memory");
+
+     /* ★★★ Enable HFOSC + CLK_100M (DevKit-e8 template과 동일!) */
+    int32_t clk_ret = board_clocks_config(CLKEN_HFOSC_MASK | CLKEN_CLK_100M_MASK);
+    *(volatile uint32_t*)0x027DC0F8 = (uint32_t)clk_ret;   // ★ 별도 address!
+    *(volatile uint32_t*)0x027DC0E0 = 0xCB000020;
+    __asm volatile ("dsb sy" ::: "memory");
+
+    /* ★★★★★ Step 2: vbat_init — MIPI DPHY power on + isolation 해제 */
+    uint32_t pwr_before = VBAT->PWR_CTRL;
+    *(volatile uint32_t*)0x027DC0FC = pwr_before;   // ★ before marker
+    
+    /* Enable MIPI DPHY power */
+    VBAT->PWR_CTRL &= ~(VBAT_PWR_CTRL_TX_DPHY_PWR_MASK | 
+                        VBAT_PWR_CTRL_RX_DPHY_PWR_MASK |
+                        VBAT_PWR_CTRL_DPHY_PLL_PWR_MASK | 
+                        VBAT_PWR_CTRL_DPHY_VPH_1P8_PWR_BYP_EN);
+    
+    /* Disable MIPI DPHY isolation */
+    VBAT->PWR_CTRL &= ~(VBAT_PWR_CTRL_TX_DPHY_ISO | 
+                        VBAT_PWR_CTRL_RX_DPHY_ISO | 
+                        VBAT_PWR_CTRL_DPHY_PLL_ISO);
+    
+    uint32_t pwr_after = VBAT->PWR_CTRL;
+    *(volatile uint32_t*)0x027DC0FE = pwr_after;    // ★ after marker
+    *(volatile uint32_t*)0x027DC0E0 = 0xCB000022;
+    __asm volatile ("dsb sy" ::: "memory");
     
     hal_camera_reset();
     *(volatile uint32_t*)0x027DC0E0 = 0xCB000002;
     __asm volatile ("dsb sy" ::: "memory");
+
+    /* ★★★★★ P0_3 CAM_XVCLK_A — pins.h 정확한 pad_control! */
+    int32_t pmux_ret = pinconf_set(PORT_0, PIN_3, 
+                                    PINMUX_ALTERNATE_FUNCTION_6,
+                                    PADCTRL_DRIVER_DISABLED_BUS_REPEATER | 
+                                    PADCTRL_OUTPUT_DRIVE_STRENGTH_4MA);    // ★★★ 4mA drive!
+    *(volatile uint32_t*)0x027DC0E0 = 0xCB00000A;
+    *(volatile uint32_t*)0x027DC0E4 = (uint32_t)pmux_ret;
+    __asm volatile ("dsb sy" ::: "memory");
+    if (pmux_ret != 0) {
+        return false;
+    }
+
+    /* ★★★ 2. Camera I2C SDA Pin-Mux (P7_2 = I2C1_SDA_C function 5) */
+    int32_t sda_ret = pinconf_set(
+        PORT_(BOARD_CAMERA_I2C_SDA_GPIO_PORT),
+        BOARD_CAMERA_I2C_SDA_GPIO_PIN,
+        BOARD_CAMERA_I2C_SDA_ALTERNATE_FUNCTION,
+        PADCTRL_READ_ENABLE | PADCTRL_DRIVER_DISABLED_PULL_UP);
+    *(volatile uint32_t*)0x027DC0E0 = 0xCB00000B;
+    *(volatile uint32_t*)0x027DC0E4 = (uint32_t)sda_ret;
+    __asm volatile ("dsb sy" ::: "memory");
+    if (sda_ret != 0) {
+        return false;
+    }
+
+    /* ★★★ 3. Camera I2C SCL Pin-Mux (P7_3 = I2C1_SCL_C function 5) */
+    int32_t scl_ret = pinconf_set(
+        PORT_(BOARD_CAMERA_I2C_SCL_GPIO_PORT),
+        BOARD_CAMERA_I2C_SCL_GPIO_PIN,
+        BOARD_CAMERA_I2C_SCL_ALTERNATE_FUNCTION,
+        PADCTRL_READ_ENABLE | PADCTRL_DRIVER_DISABLED_PULL_UP);
+    *(volatile uint32_t*)0x027DC0E0 = 0xCB00000C;
+    *(volatile uint32_t*)0x027DC0E4 = (uint32_t)scl_ret;
+    __asm volatile ("dsb sy" ::: "memory");
+    if (scl_ret != 0) {
+        return false;
+    }
     
     info("Initialising camera interface: %s\n", s_cam_dev.name);
     *(volatile uint32_t*)0x027DC0E0 = 0xCB000003;

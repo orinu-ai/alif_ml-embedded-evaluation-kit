@@ -63,6 +63,7 @@ USER_OPTION(${use_case}_SHOW_INF_TIME "Show inference time"
 
 set(${use_case}_COMPILE_DEFS
     SHOW_INF_TIME=$<BOOL:${${use_case}_SHOW_INF_TIME}>
+    $<$<BOOL:${SE_SERVICES_SUPPORT}>:SE_SERVICES_SUPPORT>   # ★★★ 이 라인 추가!
 )
 
 if (ETHOS_U_NPU_ENABLED)

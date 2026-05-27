@@ -18,6 +18,12 @@
 
 #include "log_macros.h"
 
+/* Phase 15b verification marker */
+#define YFM_MARKER(val) do { \
+    *(volatile uint32_t*)0x027DC520 = (val); \
+    __asm volatile ("dsb sy" ::: "memory"); \
+} while(0)
+
 const tflite::MicroOpResolver& arm::app::fwk::tflm::YoloFastestModel::GetOpResolver()
 {
     return this->m_opResolver;
@@ -25,6 +31,8 @@ const tflite::MicroOpResolver& arm::app::fwk::tflm::YoloFastestModel::GetOpResol
 
 bool arm::app::fwk::tflm::YoloFastestModel::EnlistOperations()
 {
+    YFM_MARKER(0xC1000001);    // ★ entry
+
 #ifndef ETHOS_U_NPU_ASSUMED
     this->m_opResolver.AddDepthwiseConv2D();
     this->m_opResolver.AddConv2D();
@@ -36,11 +44,19 @@ bool arm::app::fwk::tflm::YoloFastestModel::EnlistOperations()
     this->m_opResolver.AddConcatenation();
 #endif
 
-    if (kTfLiteOk == this->m_opResolver.AddEthosU()) {
+    YFM_MARKER(0xC1000002);    // ★ before AddEthosU
+    TfLiteStatus status = this->m_opResolver.AddEthosU();
+    YFM_MARKER(0xC1000003);    // ★ after AddEthosU (return값 무관)
+
+    if (kTfLiteOk == status) {
+        YFM_MARKER(0xC1000004);    // ★ AddEthosU OK
         info("Added %s support to op resolver\n", tflite::GetString_ETHOSU());
     } else {
+        YFM_MARKER(0xC100FA01);    // ★ AddEthosU FAIL
         printf_err("Failed to add Arm NPU support to op resolver.");
         return false;
     }
+    
+    YFM_MARKER(0xC1000005);    // ★ EnlistOperations exit OK
     return true;
 }

@@ -160,10 +160,9 @@ endif()
 ## Board sources
 target_sources(${CMSIS_DEVICE_TARGET}
     PRIVATE
-    ${ALIF_CMSIS_PATH}/libs/board_config/board_config.c
+     ${ALIF_CMSIS_PATH}/libs/board_config/board_config.c
     Boards/utils/board_utils.c
     )
-
 
 # Device definition needs to be set, is checked in source files to include correct header
 target_compile_definitions(${CMSIS_DEVICE_TARGET}

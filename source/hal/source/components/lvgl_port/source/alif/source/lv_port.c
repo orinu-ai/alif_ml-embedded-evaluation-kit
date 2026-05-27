@@ -23,6 +23,12 @@
 #define MY_DISP_VER_RES RTE_PANEL_VACTIVE_LINE
 #define MY_DISP_BUFFER  (MY_DISP_VER_RES * 32)
 
+/* ★ Phase 15b Step 3 — lv_port_disp_init progress markers */
+#define LVD_MARKER(val) do { \
+    *(volatile uint32_t*)0x027DC538 = (val); \
+    __asm volatile ("dsb sy" ::: "memory"); \
+} while(0)
+
 #if LV_COLOR_DEPTH == 32
 #if RTE_CDC200_PIXEL_FORMAT != 1
 #error "LCD framebuffer must be set to RGB888 for 32-bit LVGL color depth"
@@ -187,6 +193,7 @@ void lv_port_disp_init(void)
 {
     if (lv_inited)
     {
+        LVD_MARKER(0xF1000001);  
         uint32_t lv_lock_state = lv_port_lock();
         lv_obj_t *screen = lv_screen_active();
         uint32_t children = lv_obj_get_child_count(screen);
@@ -199,16 +206,23 @@ void lv_port_disp_init(void)
     }
 
     LCD_Panel_init(&lcd_image[0][0][0]);
+    LVD_MARKER(0xF1000002);  
 
     /* This drawing buffer should be in DCTM for speed. */
     static lvgl_pixel_t buf_1[MY_DISP_BUFFER];
 
     lv_init();
+    LVD_MARKER(0xF1000003);  
+
     lv_tick_set_cb(lv_port_get_ticks);
 
     lv_display_t * disp = lv_display_create(MY_DISP_HOR_RES, MY_DISP_VER_RES);
+    LVD_MARKER(0xF1000004);  
+
     lv_display_set_flush_cb(disp, lv_display_flush_async);
     lv_display_set_buffers(disp, buf_1, NULL, MY_DISP_BUFFER, LV_DISPLAY_RENDER_MODE_PARTIAL);
+    LVD_MARKER(0xF1000005);  
+
     lv_display_set_flush_wait_cb(disp, lv_display_flush_wait);
 #if LV_COLOR_DEPTH == 32
     lv_display_add_event_cb(disp, lv_event_cb, LV_EVENT_INVALIDATE_AREA, NULL);
@@ -227,13 +241,16 @@ void lv_port_disp_init(void)
      * painting work.
      */
     NVIC_SetPriority (SysTick_IRQn, 0x80 >> (8-__NVIC_PRIO_BITS));
+    LVD_MARKER(0xF1000006);  
 
     LCD_enable_tear_interrupt(do_pending_flush, 0xC0 >> (8-__NVIC_PRIO_BITS));
+    LVD_MARKER(0xF1000007);
 
     lv_last_timer_handler_trigger = -256;
     NVIC_SetPriority(PendSV_IRQn, 0xFF >> (8-__NVIC_PRIO_BITS));
     NVIC_SetPriorityGrouping(0);
-
+    LVD_MARKER(0xF1000008);
+      
     lv_inited = true;
 }
 

@@ -379,10 +379,9 @@ int platform_init(void)
     if (HWSEMdrv->TryLock() == ARM_DRIVER_OK) {
         /* We're first to acquire the lock - we do it */
 #endif // BALLETTO_DEVICE
-#if !defined(M55_HP) && !defined(RTSS_HP)
-        /* Em-boxer A4-v4e: HP는 pinmux/GPIO skip (ETH 핀 영향 회피) */
-        board_pins_config();
-        board_gpios_config();
+#if 1  /* Phase 16: board_pins_config restored for Camera */
+    board_pins_config();
+    board_gpios_config();
 #endif
         BOARD_UTILS_Init();
 
@@ -973,5 +972,6 @@ void hp_phase15b_step1_init(void)
     HP_MARKER(0xCAFE0008);
     NVIC_SetPriority((IRQn_Type)ETHOS_U_IRQN, 0x60);
     HP_MARKER(0xCAFE000A);
+    HP_MARKER(0xCAFE000B);  // ★ 새로 추가 - 함수 진짜 끝
 }
 #endif

@@ -15,6 +15,12 @@
 
 #include "log_macros.h"
 
+/* ★ Phase 15b Step 3 — ScreenLayoutInit progress markers */
+#define SLI_MARKER(val) do { \
+    *(volatile uint32_t*)0x027DC530 = (val); \
+    __asm volatile ("dsb sy" ::: "memory"); \
+} while(0)
+
 extern "C" {
     LV_IMAGE_DECLARE(Alif240);
     LV_IMAGE_DECLARE(Alif240_white);
@@ -44,13 +50,21 @@ void ScreenLayoutInit(const void *imgData,
                       unsigned short imgZoom,
                       bool hasProgressBar)
 {
+    SLI_MARKER(0xE1000001); 
+
     lv_port_disp_init();
+    SLI_MARKER(0xE1000002); 
 
     uint32_t lv_lock_state = lv_port_lock();
+    SLI_MARKER(0xE1000003);
+
     lv_obj_t *screen = lv_screen_active();
+    SLI_MARKER(0xE1000004); 
 
     static lv_style_t style;
     lv_style_init(&style);
+    SLI_MARKER(0xE1000005);
+
 #if LV_THEME_DEFAULT_DARK == 0
     lv_style_set_bg_color(&style, lv_color_white());
 #else
@@ -59,10 +73,13 @@ void ScreenLayoutInit(const void *imgData,
 
     lv_style_set_text_font(&style, &lv_font_montserrat_28);
     lv_obj_add_style(screen, &style, LV_PART_MAIN);
+    SLI_MARKER(0xE1000006); 
 
     /* Grid layout for the screen */
     int32_t scrWidth = lv_obj_get_width(screen);
     int32_t scrHeight = lv_obj_get_height(screen);
+    SLI_MARKER(0xE1000007);
+     
     bool landscape;
     if (scrWidth > scrHeight) {
         landscape = true;
