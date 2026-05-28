@@ -158,32 +158,24 @@ bool hal_camera_init(void)
     *(volatile uint32_t*)0x027DC0E0 = 0xCB00000E;
     __asm volatile ("dsb sy" ::: "memory");
     
-    /* Step 4 REMOVED (2026-05-28 PM): P14_3 MUX control
-     * Reason: DevKit-e8에는 BOARD_CAMERA_I2C_C1_C2 macro 없음
-     *   - STANDARD_CAM_EN feature = AppKit-e7 only
-     *   - DevKit-e8 = J16 단일 connector 직접 routing
-     *   - MUX control 자체 필요 없음 + 잘못된 pin (P14_2 = 진짜 DISPLAY_MUX)
-     */
-    *(volatile uint32_t*)0x027DC150 = 0xCAFE0099;  /* Step 4 removed */
-    *(volatile uint32_t*)0x027DC160 = 0xCAFE0099;  /* Step 4 removed */
+    /* ★★★★★ Step 4: I2C MUX select — P14_3 LOW → CAM1 (J16 Bottom) */
+    pinconf_set(PORT_14, PIN_3, PINMUX_ALTERNATE_FUNCTION_0, 
+                PADCTRL_OUTPUT_DRIVE_STRENGTH_4MA);
+    
+    int32_t mi_init = DRV_GPIO14_mux->Initialize(3, NULL);
+    *(volatile uint32_t*)0x027DC150 = (uint32_t)mi_init;
+    
+    int32_t mi_pwr = DRV_GPIO14_mux->PowerControl(3, ARM_POWER_FULL);
+    *(volatile uint32_t*)0x027DC154 = (uint32_t)mi_pwr;
+    
+    int32_t mi_val = DRV_GPIO14_mux->SetValue(3, GPIO_PIN_OUTPUT_STATE_HIGH);  // ★ HIGH = J16!
+    *(volatile uint32_t*)0x027DC158 = (uint32_t)mi_val;
+    
+    int32_t mi_dir = DRV_GPIO14_mux->SetDirection(3, GPIO_PIN_DIRECTION_OUTPUT);
+    *(volatile uint32_t*)0x027DC15C = (uint32_t)mi_dir;
+    
+    *(volatile uint32_t*)0x027DC160 = 0xCAFE0002;  // MUX → CAM1 set!
     *(volatile uint32_t*)0x027DC0E0 = 0xCB00000D;
-
-    /* Step 5: CAMERA_RESET P14_4 + POWER P7_5 pinmux alt 0 (GPIO) */
-    /* CRITICAL: ARX3A0 driver SetValue(HIGH) SUCCESS but P14_4 = 0V */
-    /* → pinmux alt 0 (GPIO) 명시적 설정 안 됨 → register 작성 OK but 출력 X */
-    /* Fix: pinconf_set alt 0 명시 → 진짜 GPIO output 활성화 */
-    int32_t rst_pmux = pinconf_set(PORT_14, PIN_4,
-                                    PINMUX_ALTERNATE_FUNCTION_0,
-                                    PADCTRL_OUTPUT_DRIVE_STRENGTH_4MA);
-    *(volatile uint32_t*)0x027DC17C = (uint32_t)rst_pmux;
-
-    int32_t pwr_pmux = pinconf_set(PORT_7, PIN_5,
-                                    PINMUX_ALTERNATE_FUNCTION_0,
-                                    PADCTRL_OUTPUT_DRIVE_STRENGTH_4MA);
-    *(volatile uint32_t*)0x027DC180 = (uint32_t)pwr_pmux;
-    *(volatile uint32_t*)0x027DC188 = 0xC4750001;  /* P14_4 + P7_5 pinmux done */
-    __asm volatile ("dsb sy" ::: "memory");
-    __asm volatile ("dsb sy" ::: "memory");
     __asm volatile ("dsb sy" ::: "memory");
     /********************************** */
     hal_camera_reset();

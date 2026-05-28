@@ -167,22 +167,6 @@ bool hal_camera_init(void)
     *(volatile uint32_t*)0x027DC150 = 0xCAFE0099;  /* Step 4 removed */
     *(volatile uint32_t*)0x027DC160 = 0xCAFE0099;  /* Step 4 removed */
     *(volatile uint32_t*)0x027DC0E0 = 0xCB00000D;
-
-    /* Step 5: CAMERA_RESET P14_4 + POWER P7_5 pinmux alt 0 (GPIO) */
-    /* CRITICAL: ARX3A0 driver SetValue(HIGH) SUCCESS but P14_4 = 0V */
-    /* → pinmux alt 0 (GPIO) 명시적 설정 안 됨 → register 작성 OK but 출력 X */
-    /* Fix: pinconf_set alt 0 명시 → 진짜 GPIO output 활성화 */
-    int32_t rst_pmux = pinconf_set(PORT_14, PIN_4,
-                                    PINMUX_ALTERNATE_FUNCTION_0,
-                                    PADCTRL_OUTPUT_DRIVE_STRENGTH_4MA);
-    *(volatile uint32_t*)0x027DC17C = (uint32_t)rst_pmux;
-
-    int32_t pwr_pmux = pinconf_set(PORT_7, PIN_5,
-                                    PINMUX_ALTERNATE_FUNCTION_0,
-                                    PADCTRL_OUTPUT_DRIVE_STRENGTH_4MA);
-    *(volatile uint32_t*)0x027DC180 = (uint32_t)pwr_pmux;
-    *(volatile uint32_t*)0x027DC188 = 0xC4750001;  /* P14_4 + P7_5 pinmux done */
-    __asm volatile ("dsb sy" ::: "memory");
     __asm volatile ("dsb sy" ::: "memory");
     __asm volatile ("dsb sy" ::: "memory");
     /********************************** */
