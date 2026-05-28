@@ -379,10 +379,14 @@ int platform_init(void)
     if (HWSEMdrv->TryLock() == ARM_DRIVER_OK) {
         /* We're first to acquire the lock - we do it */
 #endif // BALLETTO_DEVICE
-#if 1  /* Phase 16: board_pins_config restored for Camera */
+
+// AFTER (★ ETH 보호 복원):
+#if !defined(M55_HP) && !defined(RTSS_HP)
+    /* Em-boxer A4-v4e: HP는 pinmux/GPIO skip (ETH 핀 영향 회피) */
     board_pins_config();
     board_gpios_config();
 #endif
+
         BOARD_UTILS_Init();
 
         //tracelib_init(NULL); // disabled for ETH coexistence

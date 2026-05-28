@@ -38,6 +38,12 @@
 #include "board_config.h"   // CLKEN_HFOSC_MASK, CLKEN_CLK_100M_MASK
 #include "soc.h"               // VBAT struct
 
+#include "Driver_IO.h"
+
+extern ARM_DRIVER_GPIO ARM_Driver_GPIO_(11);
+extern ARM_DRIVER_GPIO ARM_Driver_GPIO_(14);
+static ARM_DRIVER_GPIO *DRV_GPIO11_eth = &ARM_Driver_GPIO_(11);
+static ARM_DRIVER_GPIO *DRV_GPIO14_mux = &ARM_Driver_GPIO_(14);
 
 /* ★ VBAT_PWR_CTRL bit definitions (from DevKit-e8 template main.c) */
 #define VBAT_PWR_CTRL_TX_DPHY_PWR_MASK        (1U << 0)
@@ -139,7 +145,39 @@ bool hal_camera_init(void)
     *(volatile uint32_t*)0x027DC0FE = pwr_after;    // ★ after marker
     *(volatile uint32_t*)0x027DC0E0 = 0xCB000022;
     __asm volatile ("dsb sy" ::: "memory");
+
+    /********   2026.5.28 ******* */
+    /* ★★★★★ Step 3: ext_init equivalent — ETH_RST_B (P11_6) HIGH */
+    pinconf_set(PORT_11, PIN_6, PINMUX_ALTERNATE_FUNCTION_0, 
+                PADCTRL_OUTPUT_DRIVE_STRENGTH_4MA);
+    DRV_GPIO11_eth->Initialize(6, NULL);
+    DRV_GPIO11_eth->PowerControl(6, ARM_POWER_FULL);
+    DRV_GPIO11_eth->SetValue(6, GPIO_PIN_OUTPUT_STATE_HIGH);
+    DRV_GPIO11_eth->SetDirection(6, GPIO_PIN_DIRECTION_OUTPUT);
+    *(volatile uint32_t*)0x027DC170 = 0xE7000001;  // ETH PHY reset released
+    *(volatile uint32_t*)0x027DC0E0 = 0xCB00000E;
+    __asm volatile ("dsb sy" ::: "memory");
     
+    /* ★★★★★ Step 4: I2C MUX select — P14_3 LOW → CAM1 (J16 Bottom) */
+    pinconf_set(PORT_14, PIN_3, PINMUX_ALTERNATE_FUNCTION_0, 
+                PADCTRL_OUTPUT_DRIVE_STRENGTH_4MA);
+    
+    int32_t mi_init = DRV_GPIO14_mux->Initialize(3, NULL);
+    *(volatile uint32_t*)0x027DC150 = (uint32_t)mi_init;
+    
+    int32_t mi_pwr = DRV_GPIO14_mux->PowerControl(3, ARM_POWER_FULL);
+    *(volatile uint32_t*)0x027DC154 = (uint32_t)mi_pwr;
+    
+    int32_t mi_val = DRV_GPIO14_mux->SetValue(3, GPIO_PIN_OUTPUT_STATE_HIGH);  // ★ HIGH = J16!
+    *(volatile uint32_t*)0x027DC158 = (uint32_t)mi_val;
+    
+    int32_t mi_dir = DRV_GPIO14_mux->SetDirection(3, GPIO_PIN_DIRECTION_OUTPUT);
+    *(volatile uint32_t*)0x027DC15C = (uint32_t)mi_dir;
+    
+    *(volatile uint32_t*)0x027DC160 = 0xCAFE0002;  // MUX → CAM1 set!
+    *(volatile uint32_t*)0x027DC0E0 = 0xCB00000D;
+    __asm volatile ("dsb sy" ::: "memory");
+    /********************************** */
     hal_camera_reset();
     *(volatile uint32_t*)0x027DC0E0 = 0xCB000002;
     __asm volatile ("dsb sy" ::: "memory");
